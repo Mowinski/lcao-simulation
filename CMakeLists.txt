@@ -64,3 +64,14 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     ${CMAKE_SOURCE_DIR}/shaders
     $<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders
 )
+
+# Installation
+include(GNUInstallDirs)
+
+install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(DIRECTORY shaders
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
