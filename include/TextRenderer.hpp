@@ -23,6 +23,7 @@ public:
     TextRenderer(GLuint width, GLuint height);
     void Load(std::string font, unsigned int fontSize);
     void RenderText(std::string text, float x, float y, float scale, glm::vec3 color);
+    void updateProjection(GLuint width, GLuint height);
 
 private:
     GLuint shaderProgram;

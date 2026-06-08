@@ -73,7 +73,10 @@ void Nucleus::setupMesh(float radius, int sectors, int stacks) {
 
 void Nucleus::draw(const glm::mat4& viewProj, GLuint shaderProgram) {
     glm::mat4 model = glm::translate(glm::mat4(1.0f), position);
-    
+    draw(viewProj, model, shaderProgram);
+}
+
+void Nucleus::draw(const glm::mat4& viewProj, const glm::mat4& model, GLuint shaderProgram) {
     glUseProgram(shaderProgram);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "uModel"), 1, GL_FALSE, glm::value_ptr(model));
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "uViewProj"), 1, GL_FALSE, glm::value_ptr(viewProj));

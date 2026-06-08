@@ -77,6 +77,33 @@ void ElectronCloud::generatePoints(const glm::vec3& posA, const glm::vec3& posB,
     err = clEnqueueReadBuffer(clManager->queue, buffer_out, CL_TRUE, 0, sizeof(glm::vec4) * targetPointCount, points.data(), 0, nullptr, nullptr);
 
     clReleaseMemObject(buffer_out);
+
+    calculateRadialDensity(range);
+}
+
+void ElectronCloud::calculateRadialDensity(float range) {
+    const int binCount = 100;
+    radialDensity.assign(binCount, 0.0f);
+    
+    if (points.empty()) return;
+
+    float maxR = range;
+    float dr = maxR / binCount;
+
+    for (const auto& p : points) {
+        float r = glm::length(glm::vec3(p));
+        int bin = static_cast<int>(r / dr);
+        if (bin >= 0 && bin < binCount) {
+            radialDensity[bin] += 1.0f;
+        }
+    }
+
+    // Normalize
+    float maxVal = 0.0f;
+    for (float val : radialDensity) if (val > maxVal) maxVal = val;
+    if (maxVal > 0.0f) {
+        for (float& val : radialDensity) val /= maxVal;
+    }
 }
 
 void ElectronCloud::setupBuffers() {

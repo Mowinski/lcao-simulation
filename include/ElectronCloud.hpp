@@ -26,14 +26,18 @@ public:
                       OrbitalType type1, OrbitalType type2, float t, bool isBonding, float range);
     void setTargetPointCount(int count) { targetPointCount = count; }
 
+    const std::vector<float>& getRadialDensity() const { return radialDensity; }
+
 private:
     void generatePoints(const glm::vec3& posA, const glm::vec3& posB, 
                         OrbitalType type1, OrbitalType type2, float t, bool isBonding, float range);
     void setupBuffers();
+    void calculateRadialDensity(float range);
 
     OpenCLManager* clManager;
     int targetPointCount;
     std::vector<glm::vec4> points;
+    std::vector<float> radialDensity;
     GLuint vao, vbo;
 };
 

@@ -126,3 +126,7 @@ void TextRenderer::RenderText(std::string text, float x, float y, float scale, g
     glBindVertexArray(0);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
+
+void TextRenderer::updateProjection(GLuint width, GLuint height) {
+    projection = glm::ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height));
+}
