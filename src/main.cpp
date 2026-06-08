@@ -17,6 +17,7 @@
 #include "Shader.hpp"
 #include "Camera.hpp"
 #include "TextRenderer.hpp"
+#include "OpenCLManager.hpp"
 
 // Global camera and mouse state
 Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), 5.0f);
@@ -28,6 +29,9 @@ bool mouseCaptured = true;
 OrbitalType orbital1 = OrbitalType::ORBITAL_1S;
 OrbitalType orbital2 = OrbitalType::ORBITAL_2PZ;
 float mixFactor = 0.0f;
+float nucleiDistance = 1.6f;
+int targetPointCount = 50000;
+float samplingRange = 15.0f;
 bool isHybrid = false;
 bool isBonding = true;
 bool orbitalChanged = false;
@@ -113,6 +117,12 @@ int main() {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_PROGRAM_POINT_SIZE);
 
+    OpenCLManager clManager;
+    if (!clManager.init("shaders/simulation.cl")) {
+        std::cerr << "OpenCL Initialization failed. Ensure your GPU supports OpenCL." << std::endl;
+        return -1;
+    }
+
     TextRenderer textRenderer(800, 600);
     textRenderer.Load("/System/Library/Fonts/Supplemental/Arial.ttf", 24);
 
@@ -121,10 +131,10 @@ int main() {
     
     Nucleus nucleus1(0.1f, 32, 32);
     Nucleus nucleus2(0.1f, 32, 32);
-    nucleus1.setPosition(glm::vec3(-0.8f, 0.0f, 0.0f));
-    nucleus2.setPosition(glm::vec3(0.8f, 0.0f, 0.0f));
+    nucleus1.setPosition(glm::vec3(-nucleiDistance / 2.0f, 0.0f, 0.0f));
+    nucleus2.setPosition(glm::vec3(nucleiDistance / 2.0f, 0.0f, 0.0f));
 
-    ElectronCloud cloud(50000, nucleus1.getPosition(), nucleus2.getPosition(), orbital1, orbital2, isHybrid ? mixFactor : 0.0f, isBonding);
+    ElectronCloud cloud(&clManager, targetPointCount, nucleus1.getPosition(), nucleus2.getPosition(), orbital1, orbital2, isHybrid ? mixFactor : 0.0f, isBonding, samplingRange);
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -132,10 +142,11 @@ int main() {
         if (orbitalChanged) {
             glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            textRenderer.RenderText("Calculating cloud points...", 250.0f, 300.0f, 0.8f, glm::vec3(1.0f, 0.5f, 0.0f));
+            textRenderer.RenderText("Calculating cloud points (GPU)...", 250.0f, 300.0f, 0.8f, glm::vec3(1.0f, 0.5f, 0.0f));
             glfwSwapBuffers(window);
 
-            cloud.updatePoints(nucleus1.getPosition(), nucleus2.getPosition(), orbital1, orbital2, isHybrid ? mixFactor : 0.0f, isBonding);
+            cloud.setTargetPointCount(targetPointCount);
+            cloud.updatePoints(nucleus1.getPosition(), nucleus2.getPosition(), orbital1, orbital2, isHybrid ? mixFactor : 0.0f, isBonding, samplingRange);
             orbitalChanged = false;
         }
 
@@ -148,6 +159,14 @@ int main() {
         {
             ImGui::Begin("Simulation Controls", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
             
+            if (ImGui::SliderFloat("Nuclei Distance", &nucleiDistance, 0.2f, 10.0f)) {
+                nucleus1.setPosition(glm::vec3(-nucleiDistance / 2.0f, 0.0f, 0.0f));
+                nucleus2.setPosition(glm::vec3(nucleiDistance / 2.0f, 0.0f, 0.0f));
+            }
+            ImGui::SliderInt("Point Count", &targetPointCount, 10000, 1000000);
+            ImGui::SliderFloat("Sampling Range", &samplingRange, 2.0f, 40.0f);
+            ImGui::Separator();
+
             int orb1 = static_cast<int>(orbital1);
             ImGui::Combo("Orbital 1", &orb1, orbitalNames, IM_ARRAYSIZE(orbitalNames));
             orbital1 = static_cast<OrbitalType>(orb1);
@@ -165,7 +184,7 @@ int main() {
             ImGui::Checkbox("Bonding State", &isBonding);
 
             ImGui::Separator();
-            if (ImGui::Button("Calculate Simulation", ImVec2(-1, 40))) {
+            if (ImGui::Button("Calculate Simulation (GPU)", ImVec2(-1, 40))) {
                 orbitalChanged = true;
             }
 
@@ -181,13 +200,16 @@ int main() {
         glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), 800.0f / 600.0f, 0.1f, 100.0f);
+        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), 800.0f / 600.0f, 0.1f, 200.0f);
         glm::mat4 view = camera.GetViewMatrix();
         glm::mat4 viewProj = projection * view;
 
         nucleus1.draw(viewProj, nucleusShader.ID);
         nucleus2.draw(viewProj, nucleusShader.ID);
+        
+        glDepthMask(GL_FALSE);
         cloud.draw(viewProj, cloudShader.ID);
+        glDepthMask(GL_TRUE);
 
         // Orbital Information Display
         std::stringstream ss;

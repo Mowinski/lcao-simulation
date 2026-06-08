@@ -2,11 +2,12 @@
 #include <random>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
+#include <ctime>
 
-ElectronCloud::ElectronCloud(int pointCount, const glm::vec3& posA, const glm::vec3& posB, 
-                            OrbitalType type1, OrbitalType type2, float t, bool isBonding) 
-    : targetPointCount(pointCount), vao(0), vbo(0) {
-    generatePoints(posA, posB, type1, type2, t, isBonding);
+ElectronCloud::ElectronCloud(OpenCLManager* clManager, int pointCount, const glm::vec3& posA, const glm::vec3& posB, 
+                            OrbitalType type1, OrbitalType type2, float t, bool isBonding, float range) 
+    : clManager(clManager), targetPointCount(pointCount), vao(0), vbo(0) {
+    generatePoints(posA, posB, type1, type2, t, isBonding, range);
     setupBuffers();
 }
 
@@ -15,7 +16,8 @@ ElectronCloud::~ElectronCloud() {
     if (vbo) glDeleteBuffers(1, &vbo);
 }
 
-Physics::OrbitalFunc getOrbitalFunc(OrbitalType type) {
+// Utility to get orbital function on CPU for maxDensity estimation
+static Physics::OrbitalFunc getCPUOrbital(OrbitalType type) {
     switch(type) {
         case OrbitalType::ORBITAL_1S:   return [](const glm::vec3& p) { return Physics::psi_1s(glm::length(p)); };
         case OrbitalType::ORBITAL_2S:   return [](const glm::vec3& p) { return Physics::psi_2s(glm::length(p)); };
@@ -32,38 +34,49 @@ Physics::OrbitalFunc getOrbitalFunc(OrbitalType type) {
 }
 
 void ElectronCloud::generatePoints(const glm::vec3& posA, const glm::vec3& posB, 
-                                 OrbitalType type1, OrbitalType type2, float t, bool isBonding) {
-    points.clear();
-    points.reserve(targetPointCount);
+                                 OrbitalType type1, OrbitalType type2, float t, bool isBonding, float range) {
+    points.assign(targetPointCount, glm::vec4(0.0f));
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    
-    float range = (type1 == OrbitalType::ORBITAL_1S && type2 == OrbitalType::ORBITAL_1S) ? 6.0f : 15.0f;
-    if (type1 == OrbitalType::ORBITAL_2S || type2 == OrbitalType::ORBITAL_2S) range = 12.0f;
-    std::uniform_real_distribution<float> disPos(-range, range);
-    std::uniform_real_distribution<float> disProb(0.0f, 1.0f);
-
-    Physics::OrbitalFunc orb1 = getOrbitalFunc(type1);
-    Physics::OrbitalFunc orb2 = getOrbitalFunc(type2);
-
+    // Pre-estimate maxDensity on CPU (quick)
+    Physics::OrbitalFunc orb1 = getCPUOrbital(type1);
+    Physics::OrbitalFunc orb2 = getCPUOrbital(type2);
     float maxDensity = 0.0f;
-    for(int i=0; i<3000; ++i) {
-        glm::vec3 p(disPos(gen), disPos(gen), disPos(gen));
+    for(int i=0; i<1000; ++i) {
+        glm::vec3 p = glm::vec3(((float)rand()/RAND_MAX * 2.0f - 1.0f) * range, ((float)rand()/RAND_MAX * 2.0f - 1.0f) * range, ((float)rand()/RAND_MAX * 2.0f - 1.0f) * range);
         maxDensity = std::max(maxDensity, Physics::calculate_density_hybrid(p, posA, posB, orb1, orb2, t, isBonding));
     }
     if (maxDensity < 1e-9f) maxDensity = 1.0f;
 
-    int attempts = 0;
-    while (points.size() < targetPointCount && attempts < targetPointCount * 300) {
-        glm::vec3 p(disPos(gen), disPos(gen), disPos(gen));
-        float rho = Physics::calculate_density_hybrid(p, posA, posB, orb1, orb2, t, isBonding);
-        
-        if (disProb(gen) < rho / maxDensity) {
-            points.push_back(p);
-        }
-        attempts++;
-    }
+    // OpenCL Execution
+    cl_int err;
+    cl_mem buffer_out = clCreateBuffer(clManager->context, CL_MEM_WRITE_ONLY, sizeof(glm::vec4) * targetPointCount, nullptr, &err);
+
+    int arg = 0;
+    clSetKernelArg(clManager->kernel, arg++, sizeof(cl_mem), &buffer_out);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &posA.x);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &posA.y);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &posA.z);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &posB.x);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &posB.y);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &posB.z);
+    
+    int t1 = static_cast<int>(type1);
+    int t2 = static_cast<int>(type2);
+    int bondingInt = isBonding ? 1 : 0;
+    clSetKernelArg(clManager->kernel, arg++, sizeof(int), &t1);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(int), &t2);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &t);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(int), &bondingInt);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &range);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(float), &maxDensity);
+    unsigned int seed = (unsigned int)time(NULL);
+    clSetKernelArg(clManager->kernel, arg++, sizeof(unsigned int), &seed);
+
+    size_t global_size = targetPointCount;
+    err = clEnqueueNDRangeKernel(clManager->queue, clManager->kernel, 1, nullptr, &global_size, nullptr, 0, nullptr, nullptr);
+    err = clEnqueueReadBuffer(clManager->queue, buffer_out, CL_TRUE, 0, sizeof(glm::vec4) * targetPointCount, points.data(), 0, nullptr, nullptr);
+
+    clReleaseMemObject(buffer_out);
 }
 
 void ElectronCloud::setupBuffers() {
@@ -72,9 +85,9 @@ void ElectronCloud::setupBuffers() {
 
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(glm::vec3), points.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(glm::vec4), points.data(), GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void*)0);
     glEnableVertexAttribArray(0);
 
     glBindVertexArray(0);
@@ -90,7 +103,7 @@ void ElectronCloud::draw(const glm::mat4& viewProj, GLuint shaderProgram) {
 }
 
 void ElectronCloud::updatePoints(const glm::vec3& posA, const glm::vec3& posB, 
-                                OrbitalType type1, OrbitalType type2, float t, bool isBonding) {
-    generatePoints(posA, posB, type1, type2, t, isBonding);
+                                OrbitalType type1, OrbitalType type2, float t, bool isBonding, float range) {
+    generatePoints(posA, posB, type1, type2, t, isBonding, range);
     setupBuffers();
 }

@@ -40,8 +40,8 @@ public:
 
     void ProcessMouseScroll(float yoffset) {
         Distance -= (float)yoffset * 0.5f;
-        if (Distance < 1.0f) Distance = 1.0f;
-        if (Distance > 20.0f) Distance = 20.0f;
+        if (Distance < 0.5f) Distance = 0.5f;
+        if (Distance > 50.0f) Distance = 50.0f;
     }
 };
 

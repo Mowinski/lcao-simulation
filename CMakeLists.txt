@@ -11,6 +11,15 @@ find_package(GLEW REQUIRED)
 find_package(glm REQUIRED)
 find_package(Freetype REQUIRED)
 
+# OpenCL support
+if(APPLE)
+    find_library(OPENCL_LIBRARIES OpenCL)
+    set(OPENCL_INCLUDE_DIRS "/System/Library/Frameworks/OpenCL.framework/Headers")
+    set(OPENCL_FOUND TRUE)
+else()
+    find_package(OpenCL REQUIRED)
+endif()
+
 # ImGui Source Files
 set(IMGUI_DIR src/imgui)
 set(IMGUI_SOURCES
@@ -28,6 +37,7 @@ add_executable(${PROJECT_NAME}
     src/Nucleus.cpp 
     src/ElectronCloud.cpp 
     src/TextRenderer.cpp
+    src/OpenCLManager.cpp
     ${IMGUI_SOURCES}
 )
 
@@ -37,10 +47,16 @@ target_link_libraries(${PROJECT_NAME}
     GLEW::GLEW
     glm::glm
     Freetype::Freetype
+    ${OPENCL_LIBRARIES}
 )
 
 # Include directories
-target_include_directories(${PROJECT_NAME} PRIVATE include ${FREETYPE_INCLUDE_DIRS} ${IMGUI_DIR})
+target_include_directories(${PROJECT_NAME} PRIVATE 
+    include 
+    ${FREETYPE_INCLUDE_DIRS} 
+    ${IMGUI_DIR}
+    ${OPENCL_INCLUDE_DIRS}
+)
 
 # Copy shaders to build directory
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
