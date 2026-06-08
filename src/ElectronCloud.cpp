@@ -78,31 +78,69 @@ void ElectronCloud::generatePoints(const glm::vec3& posA, const glm::vec3& posB,
 
     clReleaseMemObject(buffer_out);
 
-    calculateRadialDensity(range);
+    calculateDensities(range);
 }
 
-void ElectronCloud::calculateRadialDensity(float range) {
-    const int binCount = 100;
-    radialDensity.assign(binCount, 0.0f);
+void ElectronCloud::calculateDensities(float range) {
+    const int radialBinCount = 100;
+    const int angularBinCount = 100;
+    const int azimuthalBinCount = 100;
+    radialDensity.assign(radialBinCount, 0.0f);
+    angularDensity.assign(angularBinCount, 0.0f);
+    azimuthalDensity.assign(azimuthalBinCount, 0.0f);
     
     if (points.empty()) return;
 
-    float maxR = range;
-    float dr = maxR / binCount;
-
     for (const auto& p : points) {
-        float r = glm::length(glm::vec3(p));
-        int bin = static_cast<int>(r / dr);
-        if (bin >= 0 && bin < binCount) {
-            radialDensity[bin] += 1.0f;
+        if (p.w < 0.5f) continue; // Skip invalid points
+
+        glm::vec3 pos = glm::vec3(p);
+        float r = glm::length(pos);
+        
+        // Radial Density
+        int rBin = static_cast<int>((r / range) * radialBinCount);
+        if (rBin >= 0 && rBin < radialBinCount) {
+            radialDensity[rBin] += 1.0f;
+        }
+
+        // Angular Density (Theta - angle from Z axis, 0 to PI)
+        if (r > 1e-6f) {
+            float cosTheta = pos.z / r;
+            float theta = acos(glm::clamp(cosTheta, -1.0f, 1.0f));
+            int aBin = static_cast<int>((theta / M_PI) * angularBinCount);
+            if (aBin >= 0 && aBin < angularBinCount) {
+                angularDensity[aBin] += 1.0f;
+            }
+
+            // Azimuthal Density (Phi - angle in XY plane, 0 to 2*PI)
+            float phi = atan2(pos.y, pos.x);
+            if (phi < 0) phi += 2.0f * M_PI;
+            int azBin = static_cast<int>((phi / (2.0f * M_PI)) * azimuthalBinCount);
+            if (azBin >= 0 && azBin < azimuthalBinCount) {
+                azimuthalDensity[azBin] += 1.0f;
+            }
         }
     }
 
-    // Normalize
-    float maxVal = 0.0f;
-    for (float val : radialDensity) if (val > maxVal) maxVal = val;
-    if (maxVal > 0.0f) {
-        for (float& val : radialDensity) val /= maxVal;
+    // Normalize Radial
+    float maxRadial = 0.0f;
+    for (float val : radialDensity) if (val > maxRadial) maxRadial = val;
+    if (maxRadial > 0.0f) {
+        for (float& val : radialDensity) val /= maxRadial;
+    }
+
+    // Normalize Angular
+    float maxAngular = 0.0f;
+    for (float val : angularDensity) if (val > maxAngular) maxAngular = val;
+    if (maxAngular > 0.0f) {
+        for (float& val : angularDensity) val /= maxAngular;
+    }
+
+    // Normalize Azimuthal
+    float maxAzimuthal = 0.0f;
+    for (float val : azimuthalDensity) if (val > maxAzimuthal) maxAzimuthal = val;
+    if (maxAzimuthal > 0.0f) {
+        for (float& val : azimuthalDensity) val /= maxAzimuthal;
     }
 }
 
@@ -114,7 +152,7 @@ void ElectronCloud::setupBuffers() {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, points.size() * sizeof(glm::vec4), points.data(), GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void*)0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void*)0);
     glEnableVertexAttribArray(0);
 
     glBindVertexArray(0);
@@ -133,4 +171,20 @@ void ElectronCloud::updatePoints(const glm::vec3& posA, const glm::vec3& posB,
                                 OrbitalType type1, OrbitalType type2, float t, bool isBonding, float range) {
     generatePoints(posA, posB, type1, type2, t, isBonding, range);
     setupBuffers();
+}
+
+float ElectronCloud::getProbabilityWithinRadius(float r) const {
+    if (points.empty()) return 0.0f;
+    
+    int countInside = 0;
+    int totalValid = 0;
+    for (const auto& p : points) {
+        if (p.w < 0.5f) continue;
+        totalValid++;
+        if (glm::length(glm::vec3(p)) <= r) {
+            countInside++;
+        }
+    }
+    
+    return totalValid > 0 ? static_cast<float>(countInside) / static_cast<float>(totalValid) : 0.0f;
 }

@@ -39,8 +39,11 @@ bool isHybrid = false;
 bool isBonding = true;
 bool orbitalChanged = false;
 float visualRadius = 1.0f;
+int chartType = 0; // 0: Radial, 1: Angular
+bool showQuitModal = false;
 
 const char* orbitalNames[] = { "1s", "2s", "2px", "2py", "2pz", "3dz2", "3dxy", "3dyz", "3dxz", "3dx2y2" };
+const char* chartNames[] = { "Radial Density P(r)", "Angular Density P(theta)", "Azimuthal Density P(phi)" };
 
 std::string getOrbitalName(OrbitalType type) {
     return orbitalNames[static_cast<int>(type)];
@@ -74,12 +77,17 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
 }
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+    if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
         mouseCaptured = !mouseCaptured;
         if (mouseCaptured)
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         else
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        showQuitModal = true;
+        mouseCaptured = false;
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     }
     if (key == GLFW_KEY_O && action == GLFW_PRESS) {
         int next = (static_cast<int>(orbital1) + 1) % 10;
@@ -165,7 +173,11 @@ int main() {
 
         // Main Menu Window
         {
-            ImGui::Begin("Simulation Controls", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+            float margin = 10.0f;
+            ImGui::SetNextWindowPos(ImVec2(margin, margin), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Always); // Width 320, height auto
+
+            ImGui::Begin("Simulation Controls", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
             
             if (ImGui::SliderFloat("Nuclei Distance", &nucleiDistance, 0.2f, 10.0f)) {
                 nucleus1.setPosition(glm::vec3(-nucleiDistance / 2.0f, 0.0f, 0.0f));
@@ -198,42 +210,103 @@ int main() {
             }
 
             ImGui::Separator();
-            ImGui::Text("Camera Controls:");
-            ImGui::Text("- ESC to toggle Mouse Capture");
-            ImGui::Text("- Mouse to rotate");
-            ImGui::Text("- Scroll to zoom");
+            if (ImGui::CollapsingHeader("Help")) {
+                ImGui::Text("Camera Controls:");
+                ImGui::BulletText("SPACE: Toggle Mouse Capture");
+                ImGui::BulletText("Mouse: Rotate view");
+                ImGui::BulletText("Scroll: Zoom in/out");
+                ImGui::BulletText("ESC: Quit application");
+                
+                ImGui::Separator();
+                ImGui::Text("About:");
+                ImGui::TextDisabled("Autor: Kamil Mowinski");
+                ImGui::TextDisabled("Email: kamil.mowinski@gmail.com");
+            }
 
             ImGui::End();
+        }
+
+        // Quit Confirmation Modal
+        if (showQuitModal) {
+            ImGuiIO& io = ImGui::GetIO();
+            ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+            ImGui::OpenPopup("Quit Confirmation");
+        }
+
+        if (ImGui::BeginPopupModal("Quit Confirmation", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Are you sure you want to quit the application?");
+            ImGui::Separator();
+
+            if (ImGui::Button("Yes", ImVec2(120, 0))) {
+                glfwSetWindowShouldClose(window, GL_TRUE);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("No", ImVec2(120, 0))) {
+                showQuitModal = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         // Chart Window Placeholder (Bottom Right)
         {
             ImGuiIO& io = ImGui::GetIO();
             float windowWidth = 300.0f;
-            float windowHeight = 150.0f;
+            float windowHeight = 220.0f;
             float margin = 10.0f;
             ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - windowWidth - margin, io.DisplaySize.y - windowHeight - margin), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(windowWidth, windowHeight), ImGuiCond_Always);
 
             ImGui::Begin("Analysis Chart", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
-            ImGui::Text("Radial Probability Density P(r)");
             
-            const std::vector<float>& densityData = cloud.getRadialDensity();
-            if (!densityData.empty()) {
-                ImVec2 pos = ImGui::GetCursorScreenPos();
-                ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y);
-                
-                ImGui::PlotLines("##density_plot", densityData.data(), static_cast<int>(densityData.size()), 0, nullptr, 0.0f, 1.1f, ImVec2(-1, -1));
-                
-                // Draw vertical line for visualRadius
-                float fraction = visualRadius / samplingRange;
-                if (fraction >= 0.0f && fraction <= 1.0f) {
-                    ImDrawList* drawList = ImGui::GetWindowDrawList();
-                    float lineX = pos.x + fraction * size.x;
-                    drawList->AddLine(ImVec2(lineX, pos.y), ImVec2(lineX, pos.y + size.y), IM_COL32(255, 0, 0, 255), 2.0f);
+            ImGui::PushItemWidth(-1);
+            ImGui::Combo("##chart_type", &chartType, chartNames, IM_ARRAYSIZE(chartNames));
+            ImGui::PopItemWidth();
+            
+            if (chartType == 0) {
+                // Radial Chart
+                const std::vector<float>& densityData = cloud.getRadialDensity();
+                if (!densityData.empty()) {
+                    ImVec2 pos = ImGui::GetCursorScreenPos();
+                    float plotHeight = 120.0f; // Fixed height for the plot
+                    ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, plotHeight);
+                    
+                    ImGui::PlotLines("##radial_plot", densityData.data(), static_cast<int>(densityData.size()), 0, nullptr, 0.0f, 1.1f, size);
+                    
+                    // Draw vertical line for visualRadius
+                    float fraction = visualRadius / samplingRange;
+                    if (fraction >= 0.0f && fraction <= 1.0f) {
+                        ImDrawList* drawList = ImGui::GetWindowDrawList();
+                        float lineX = pos.x + fraction * size.x;
+                        drawList->AddLine(ImVec2(lineX, pos.y), ImVec2(lineX, pos.y + size.y), IM_COL32(255, 0, 0, 255), 2.0f);
+                    }
+                    
+                    // Display probability with some spacing
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    float prob = cloud.getProbabilityWithinRadius(visualRadius);
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Cumulative Probability:");
+                    ImGui::Text("P(r < %.2f) = %.2f%%", visualRadius, prob * 100.0f);
+                } else {
+                    ImGui::Text("No data available. Click 'Calculate'.");
+                }
+            } else if (chartType == 1) {
+                // Angular Chart (Theta)
+                const std::vector<float>& angularData = cloud.getAngularDensity();
+                if (!angularData.empty()) {
+                    ImGui::PlotLines("##angular_plot", angularData.data(), static_cast<int>(angularData.size()), 0, "0 to PI", 0.0f, 1.1f, ImVec2(-1, -1));
+                } else {
+                    ImGui::Text("No data available. Click 'Calculate'.");
                 }
             } else {
-                ImGui::Text("No data available. Click 'Calculate'.");
+                // Azimuthal Chart (Phi)
+                const std::vector<float>& azimuthalData = cloud.getAzimuthalDensity();
+                if (!azimuthalData.empty()) {
+                    ImGui::PlotLines("##azimuthal_plot", azimuthalData.data(), static_cast<int>(azimuthalData.size()), 0, "0 to 2*PI", 0.0f, 1.1f, ImVec2(-1, -1));
+                } else {
+                    ImGui::Text("No data available. Click 'Calculate'.");
+                }
             }
             
             ImGui::End();
@@ -250,20 +323,24 @@ int main() {
         nucleus1.draw(viewProj, nucleusShader.ID);
         nucleus2.draw(viewProj, nucleusShader.ID);
         
-        // Draw visual radius sphere (wireframe)
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        // Draw visual radius sphere (wireframe) - ONLY if Radial Chart is selected
+        if (chartType == 0) {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            
+            glm::mat4 sphereModel = glm::scale(glm::mat4(1.0f), glm::vec3(visualRadius / 1.0f));
+            glUseProgram(simpleShader.ID);
+            glUniform4f(glGetUniformLocation(simpleShader.ID, "uColor"), 1.0f, 1.0f, 1.0f, 0.2f); // Faint white
+            
+            visualSphere.draw(viewProj, sphereModel, simpleShader.ID); 
+            
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
+
+        // Always enable blending and set correct func for electron cloud
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        
-        glm::mat4 sphereModel = glm::scale(glm::mat4(1.0f), glm::vec3(visualRadius / 1.0f));
-        glUseProgram(simpleShader.ID);
-        glUniform4f(glGetUniformLocation(simpleShader.ID, "uColor"), 1.0f, 1.0f, 1.0f, 0.2f); // Faint white
-        
-        visualSphere.draw(viewProj, sphereModel, simpleShader.ID); 
-        
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        glDisable(GL_BLEND);
-
         glDepthMask(GL_FALSE);
         cloud.draw(viewProj, cloudShader.ID);
         glDepthMask(GL_TRUE);
